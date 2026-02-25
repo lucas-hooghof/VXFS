@@ -1,0 +1,4 @@
+build/
+**/Makefile
+Makefile
+configure.sh

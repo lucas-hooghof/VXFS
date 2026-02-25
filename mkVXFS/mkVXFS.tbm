@@ -1,0 +1,5 @@
+C_COMPILER(gcc)
+
+FILES(main.c)
+
+OUTPUT(%workingdir%/%prefix%mkVXFS)
