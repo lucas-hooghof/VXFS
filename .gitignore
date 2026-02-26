@@ -2,3 +2,6 @@ build/
 **/Makefile
 Makefile
 configure.sh
+
+*.hdd
+VXFS-Linux/
