@@ -62,7 +62,12 @@ int main(int argc,char* argv[])
         (superblock.InodesPerTable * sizeof(VXFS_INODE) + 511) / BLOCK_SIZE;
 
     superblock.NextInodeID = 2;
+    superblock.NextInodeTableID = 0;
     superblock.InodeTablesStart = 1;
+
+    superblock.NextExtentID = 1;
+    superblock.NextExtentTableID = 0;
+
 
 
     //Extent Tables
@@ -155,6 +160,7 @@ int main(int argc,char* argv[])
     dotentry.InodeID = inode.InodeID;
     dotentry.InodeTableID = inode.InodeTableID;
     dotentry.NameLenght = 2;
+    dotentry.valid = 1;
     printf(". location: %ld\n",ftell(image));
     if (fwrite(&dotentry,1,sizeof dotentry,image) != sizeof dotentry)
     {

@@ -87,7 +87,8 @@ typedef struct
 {
     uint16_t InodeID;
     uint16_t InodeTableID;
-    uint16_t padding;
+    uint8_t valid;
+    uint8_t paddign;
     uint16_t NameLenght;
     //Follows Name length but not in struct because it can vary
 }__attribute((packed))VXFS_DIRENTRY;
@@ -108,4 +109,14 @@ static void SetBitmap(FILE* image, uint32_t BitmapLocation,uint64_t index,uint8_
     fseek(image,-1,SEEK_CUR);
     byte = byte | (1 << (index % 8));
     fwrite(&byte,1,sizeof byte,image);
+}
+
+static uint8_t GetBitmap(FILE* image, uint32_t BitmapLocation, uint64_t index)
+{
+    fseek(image, BitmapLocation * BLOCK_SIZE + index / 8, SEEK_SET);
+
+    uint8_t byte = 0;
+    fread(&byte, 1, sizeof byte, image);
+
+    return (byte >> (index % 8)) & 1;
 }
