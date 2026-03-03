@@ -30,8 +30,12 @@ int main(int argc,char* argv[])
     FILE* image = fopen(argv[1],"rb+");
     size_t PartitionSize = 0;
     fseek(image,0,SEEK_END);
-    PartitionSize = ftell(image) / 512;
+    PartitionSize = ftell(image) / BLOCK_SIZE;
     fseek(image,0,SEEK_SET);
+    for (int i = 0; i < PartitionSize; i++)
+    {
+        fwrite(&((uint8_t[512]){0}),1,512,image);
+    }
 
     VXFS_SUPERBLOCK superblock = {
         .Header = VXFS_HEADER,
@@ -44,7 +48,7 @@ int main(int argc,char* argv[])
         strncpy(superblock.Label,Label,length);
     }
 
-    superblock.BytesPerSector = 512;
+    superblock.BytesPerSector = BLOCK_SIZE;
     superblock.TotalSectors = PartitionSize;
     superblock.RootInodeID = 1;
     
@@ -55,7 +59,7 @@ int main(int argc,char* argv[])
         GROUP_SIZE_SECTORS / INODE_RATIO_SECTORS;  // 128
 
     superblock.InodeTableSize =
-        (superblock.InodesPerTable * sizeof(VXFS_INODE) + 511) / 512;
+        (superblock.InodesPerTable * sizeof(VXFS_INODE) + 511) / BLOCK_SIZE;
 
     superblock.NextInodeID = 2;
     superblock.InodeTablesStart = 1;
@@ -65,16 +69,16 @@ int main(int argc,char* argv[])
     superblock.ExtentTables = superblock.InodeTables;
 
     superblock.ExtentsPerTable =
-        superblock.InodesPerTable * EXTENTS_PER_INODE;  // 512
+        superblock.InodesPerTable * EXTENTS_PER_INODE;  // BLOCK_SIZE
 
     superblock.ExtentTableSize =
-        (superblock.ExtentsPerTable * sizeof(VXFS_EXTENT) + 511) / 512;
+        (superblock.ExtentsPerTable * sizeof(VXFS_EXTENT) + 511) / BLOCK_SIZE;
 
     superblock.ExtentTableStart = superblock.InodeTablesStart + (superblock.InodeTables * superblock.InodeTableSize);
 
-
-    superblock.DataRegionStart = superblock.ExtentTableStart + (superblock.ExtentTables * superblock.ExtentTableSize);
-
+    superblock.DataBitmapStart = superblock.ExtentTableStart + (superblock.ExtentTables * superblock.ExtentTableSize);
+    superblock.DataBitmapSize = ((PartitionSize / 8) + 511) / BLOCK_SIZE;
+    superblock.DataRegionStart = superblock.DataBitmapStart + superblock.DataBitmapSize;
     fseek(image,0,SEEK_SET);
     if (fwrite(&superblock,1,sizeof superblock,image) != sizeof superblock)
     {
@@ -83,7 +87,7 @@ int main(int argc,char* argv[])
     }
 
     //Inode Table Init
-    fseek(image,superblock.InodeTablesStart * 512,SEEK_SET);
+    fseek(image,superblock.InodeTablesStart * BLOCK_SIZE,SEEK_SET);
     for (size_t table = 0; table < superblock.InodeTables; table++)
     {
         for (size_t inodeid = 0; inodeid < superblock.InodesPerTable; inodeid++)
@@ -100,7 +104,7 @@ int main(int argc,char* argv[])
         }
     }
 
-    fseek(image,superblock.ExtentTableStart * 512,SEEK_SET);
+    fseek(image,superblock.ExtentTableStart * BLOCK_SIZE,SEEK_SET);
     for (size_t table = 0; table < superblock.ExtentTables; table++)
     {
         for (size_t ExtentId = 0; ExtentId < superblock.ExtentsPerTable; ExtentId++)
@@ -110,10 +114,15 @@ int main(int argc,char* argv[])
             extent.ExtentID = ExtentId;
             extent.ExtentTableID = table;
             extent.NextExtentUsed = 0;
+            if (fwrite(&extent, 1, sizeof extent, image) != sizeof extent)
+            {
+                fprintf(stderr,"Failed to write Extent\n");
+                return 1;
+            }
         }
     }
 
-    fseek(image,superblock.InodeTablesStart * 512 + sizeof(VXFS_INODE),SEEK_SET);
+    fseek(image,superblock.InodeTablesStart * BLOCK_SIZE + sizeof(VXFS_INODE),SEEK_SET);
     VXFS_INODE inode = {0};
     fread(&inode,1,sizeof inode,image);
     inode.free = 0;
@@ -121,26 +130,27 @@ int main(int argc,char* argv[])
     inode.ExtentID = 0;
     inode.ExtentTableID = 0;
     inode.SizeInBytes = sizeof(VXFS_DIRENTRY) * 2 + 2 +3;
-    fseek(image,superblock.InodeTablesStart * 512 + sizeof(VXFS_INODE),SEEK_SET);
+    inode.NextFreeByte = (sizeof(VXFS_DIRENTRY) * 2 + 2 +3 + 1) % BLOCK_SIZE;
+    fseek(image,superblock.InodeTablesStart * BLOCK_SIZE + sizeof(VXFS_INODE),SEEK_SET);
     if (fwrite(&inode,1,sizeof inode,image) != sizeof inode)
     {
         fprintf(stderr,"Failed to write root inode\n");
         return 1;
     }
-    fseek(image,superblock.ExtentTableStart * 512,SEEK_SET);
+    fseek(image,superblock.ExtentTableStart * BLOCK_SIZE,SEEK_SET);
     VXFS_EXTENT rootextent = {0};
     fread(&rootextent,1,sizeof rootextent,image);
     rootextent.Availible = 0;
     rootextent.StartSector = superblock.DataRegionStart;
     rootextent.SizeInSectors = 1;
-    fseek(image,superblock.ExtentTableStart * 512,SEEK_SET);
+    fseek(image,superblock.ExtentTableStart * BLOCK_SIZE,SEEK_SET);
     if (fwrite(&rootextent,1,sizeof rootextent,image) != sizeof rootextent)
     {
         fprintf(stderr,"Failed to write root Extent\n");
         return 1;
     }
 
-    fseek(image,rootextent.StartSector * 512,SEEK_SET);
+    fseek(image,rootextent.StartSector * BLOCK_SIZE,SEEK_SET);
     VXFS_DIRENTRY dotentry = {0};
     dotentry.InodeID = inode.InodeID;
     dotentry.InodeTableID = inode.InodeTableID;
@@ -172,7 +182,12 @@ int main(int argc,char* argv[])
         return 1;
     } 
 
+    printf("Bitmap Location: %ld", superblock.DataBitmapStart * BLOCK_SIZE);
+    for (int i = 0; i < superblock.DataRegionStart + 1; i++)
+    {
+        SetBitmap(image,superblock.DataBitmapStart,i,1);
+    }
 
-
+    fclose(image);
     return 0;
 }

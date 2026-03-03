@@ -1,0 +1,7 @@
+C_COMPILER(gcc)
+
+FILES(main.c)
+ADD_CFLAGS(-g)
+ADD_LDFLAGS(-g)
+
+OUTPUT(mkdirVXFS)
