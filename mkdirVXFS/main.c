@@ -57,26 +57,32 @@ static bool FindDir(
     VXFS_DIRENTRY* out_entry
 )
 {
-    fseek(image, extent.StartSector * BLOCK_SIZE, SEEK_SET);
-
     VXFS_DIRENTRY entry;
 
     for (uint64_t sector = 0; sector < extent.SizeInSectors; sector++)
     {
+        // FIX 1: seek to the correct sector on every iteration
+        fseek(image, (extent.StartSector + sector) * BLOCK_SIZE, SEEK_SET);
+
         uint64_t offset = 0;
 
-        while (offset < BLOCK_SIZE)
+        while (offset + sizeof(VXFS_DIRENTRY) <= BLOCK_SIZE)
         {
             long pos = ftell(image);
 
             if (fread(&entry, 1, sizeof(entry), image) != sizeof(entry))
                 return false;
 
-            if (!entry.valid)
-                return false;
+            // FIX 2: a zeroed/invalid entry means end-of-used-space in this sector
+            if (!entry.valid || entry.NameLenght == 0)
+                break;
 
             char* tmp = malloc(entry.NameLenght + 1);
-            fread(tmp, 1, entry.NameLenght, image);
+            if (fread(tmp, 1, entry.NameLenght, image) != entry.NameLenght)
+            {
+                free(tmp);
+                return false;
+            }
             tmp[entry.NameLenght] = '\0';
 
             if (strcmp(tmp, name) == 0)
@@ -116,14 +122,13 @@ VXFS_ERROR AllocateExtentForDir(FILE* image, VXFS_SUPERBLOCK* superblock, VXFS_I
         if (!GetBitmap(image, superblock->DataBitmapStart, i))
         {
             extent.StartSector = i;
-            extent.SizeInSectors = 1; // start with 1 sector
+            extent.SizeInSectors = 1;
             extent.ExtentID = inode->ExtentID;
             extent.ExtentTableID = inode->ExtentTableID;
             extent.NextExtentUsed = false;
 
             SetBitmap(image, superblock->DataBitmapStart, i, 1);
 
-            // Write extent to extent table
             fseek(image, superblock->ExtentTableStart * BLOCK_SIZE +
                   inode->ExtentTableID * (superblock->ExtentTableSize * BLOCK_SIZE) +
                   inode->ExtentID * sizeof(VXFS_EXTENT), SEEK_SET);
@@ -141,7 +146,7 @@ VXFS_ERROR AllocateExtentForDir(FILE* image, VXFS_SUPERBLOCK* superblock, VXFS_I
     return VXFS_OK;
 }
 
-/* --- Create a node, automatically allocating a directory extent if empty --- */
+
 VXFS_ERROR vxfs_create_node(
     FILE* image,
     VXFS_SUPERBLOCK* superblock,
@@ -153,7 +158,6 @@ VXFS_ERROR vxfs_create_node(
 {
     VXFS_INODE newnode = {0};
 
-    /* --- Allocate Inode --- */
     newnode.InodeID       = superblock->NextInodeID;
     newnode.InodeTableID  = superblock->NextInodeTableID;
     newnode.ExtentID      = superblock->NextExtentID;
@@ -161,7 +165,6 @@ VXFS_ERROR vxfs_create_node(
     newnode.Flags         = flags;
     newnode.free          = 0;
 
-    /* Advance inode/extent counters */
     superblock->NextExtentID++;
     if (superblock->NextExtentID >= superblock->ExtentsPerTable)
     {
@@ -176,7 +179,6 @@ VXFS_ERROR vxfs_create_node(
         superblock->NextInodeTableID++;
     }
 
-    /* Write inode */
     uint64_t inode_offset =
         superblock->InodeTablesStart * BLOCK_SIZE +
         newnode.InodeTableID * superblock->InodeTableSize * BLOCK_SIZE +
@@ -189,9 +191,9 @@ VXFS_ERROR vxfs_create_node(
         return VXFS_ERR_WRITE_INODE;
     }
 
-    /* --- Allocate extent if directory --- */
-    VXFS_EXTENT dir_extent = parent_extent;
-    if ((flags & DIR) && parent_extent.SizeInSectors == 0)
+    // Allocate a data extent for new directories
+    VXFS_EXTENT dir_extent = {0};
+    if (flags & DIR)
     {
         VXFS_ERROR err = AllocateExtentForDir(image, superblock, &newnode, &dir_extent);
         if (err != VXFS_OK)
@@ -201,14 +203,12 @@ VXFS_ERROR vxfs_create_node(
         }
     }
 
-    /* --- Find free slot in parent directory --- */
+    // Write the direntry into the parent
     VXFS_DIRENTRY direntry = {0};
     direntry.InodeID      = newnode.InodeID;
     direntry.InodeTableID = newnode.InodeTableID;
     direntry.NameLenght   = strlen(name);
     direntry.valid        = 1;
-
-    fseek(image, parent_extent.StartSector * BLOCK_SIZE, SEEK_SET);
 
     VXFS_DIRENTRY tmp;
     uint64_t write_offset = 0;
@@ -216,8 +216,11 @@ VXFS_ERROR vxfs_create_node(
 
     for (uint64_t sector = 0; sector < parent_extent.SizeInSectors && !found_slot; sector++)
     {
+        // FIX 3: seek to the correct sector on every iteration
+        fseek(image, (parent_extent.StartSector + sector) * BLOCK_SIZE, SEEK_SET);
+
         uint64_t offset = 0;
-        while (offset < BLOCK_SIZE)
+        while (offset + sizeof(VXFS_DIRENTRY) <= BLOCK_SIZE)
         {
             long pos = ftell(image);
             if (fread(&tmp, 1, sizeof(tmp), image) != sizeof(tmp))
@@ -242,12 +245,11 @@ VXFS_ERROR vxfs_create_node(
         return VXFS_ERR_NO_FREE_DIR_ENTRY;
     }
 
-    /* --- Write directory entry in parent --- */
     fseek(image, write_offset, SEEK_SET);
     fwrite(&direntry, 1, sizeof(direntry), image);
     fwrite(name, 1, direntry.NameLenght, image);
 
-    /* --- Initialize directory contents with "." and ".." --- */
+    // Write . and .. into the new directory's own extent
     if (flags & DIR)
     {
         VXFS_DIRENTRY dot = {0};
@@ -330,7 +332,7 @@ int main(int argc, char** argv)
                 ? ParseFlags(argc, argv, 3)
                 : DIR;
 
-            VXFS_ERROR err = vxfs_create_node(image, &superblock, current_extent, current_inode,parts[p], flags);
+            VXFS_ERROR err = vxfs_create_node(image, &superblock, current_extent, current_inode, parts[p], flags);
             if (err != VXFS_OK)
             {
                 fprintf(stderr, "Failed to create '%s': error code %d\n", parts[p], err);
@@ -338,7 +340,10 @@ int main(int argc, char** argv)
             }
 
             if (!FindDir(image, &superblock, current_extent, parts[p], &found_entry))
+            {
+                fprintf(stderr, "Failed to find dir\n");
                 return 1;
+            }
 
             uint64_t inode_offset =
                 superblock.InodeTablesStart * BLOCK_SIZE +
