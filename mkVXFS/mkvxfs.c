@@ -28,6 +28,11 @@ int main(int argc,char* argv[])
         }
     }
     FILE* image = fopen(argv[1],"rb+");
+    if (!image)
+    {
+        printf("Failed to open image %s\n",argv[1]);
+        return 1;
+    }
     size_t PartitionSize = 0;
     fseek(image,0,SEEK_END);
     PartitionSize = ftell(image) / BLOCK_SIZE;

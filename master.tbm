@@ -1,8 +1,0 @@
-TITLE(VXFS Tools)
-AUTHOR(Lucas Hooghof)
-
-FLAG(prefix --prefix= string build/)
-
-ADD_DIR(mkVXFS)
-ADD_DIR(mkdirVXFS)
-ADD_DIR(cpVXFS)

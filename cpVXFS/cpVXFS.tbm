@@ -1,5 +1,0 @@
-C_COMPILER(gcc)
-
-FILES(cpVXFS.c)
-
-OUTPUT(cpVXFS)
