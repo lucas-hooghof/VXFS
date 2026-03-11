@@ -73,6 +73,9 @@ int main(int argc,char* argv[])
     superblock.NextExtentID = 1;
     superblock.NextExtentTableID = 0;
 
+    superblock.InodeSize = sizeof(VXFS_INODE);
+    superblock.ExtentSize = sizeof(VXFS_EXTENT);
+
 
 
     //Extent Tables
