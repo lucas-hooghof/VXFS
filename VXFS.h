@@ -31,9 +31,6 @@ typedef struct
     uint16_t NextInodeTableID;
 
 
-    uint64_t FreeInodes;
-    uint64_t NextFreeInode;
-
     uint64_t RootInodeID;
 
     uint64_t InodeTablesStart;
@@ -49,7 +46,7 @@ typedef struct
 
     uint16_t unused;
 
-    uint8_t padding[BLOCK_SIZE-168];
+    uint8_t padding[BLOCK_SIZE-119];
 
 }__attribute__((packed))VXFS_SUPERBLOCK;
 
@@ -100,7 +97,6 @@ typedef enum
     SYSLINK = BIT(2),
     HARDLINK = BIT(3)
 }VXFS_FLAGS;
-
 static void SetBitmap(FILE* image, uint32_t BitmapLocation,uint64_t index,uint8_t value)
 {
     fseek(image,BitmapLocation * BLOCK_SIZE + index / 8,SEEK_SET);
